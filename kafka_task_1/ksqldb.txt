@@ -1,0 +1,96 @@
+------------------------------------------consume by select and produce by insert------------------------------------------------
+#ksqldb doc -> https://docs.ksqldb.io/en/latest/developer-guide/ksqldb-reference/insert-into/
+ksql> CREATE STREAM bill_homework_1 (id VARCHAR, name DOUBLE, desc DOUBLE) WITH (kafka_topic='bill_homework_1', value_format='json', partitions=1);
+
+ksql> SELECT * FROM bill_homework_1 EMIT CHANGES;
+
+
+#open new power shell
+
+PS C:\Users\bill_wang> cd D:\b\HDP\examples\clickstream\
+PS D:\b\HDP\examples\clickstream> docker-compose exec ksqldb-cli bash
+root@80a4302240ef:/# ksql http://ksqldb-server:8088
+
+ksql> insert into bill_homework_1 (id, name, desc) values ('1', 1.1, 1.2);
+
+
+
+------------------------------------------------------elasticsearch and grafana------------------------------------------------
+
+#Removing kafkaconnect template if it exists already.
+curl -s -XDELETE "http://$ELASTIC_HOST:9200/_template/kafkaconnect/" > /tmp/log.txt
+
+#Loading Elastic Dynamic Template to ensure _TS fields are used for TimeStamp\n\n
+curl -XPUT "http://$ELASTIC_HOST:9200/_template/kafkaconnect/" -H 'Content-Type: application/json' -d '
+{
+  "template": "*",
+  "settings": {
+    "number_of_shards": 1,
+    "number_of_replicas": 0
+  },
+  "mappings": {
+    "_default_": {
+      "dynamic_templates": [
+        {
+          "dates": {
+            "match": "EVENT_TS",
+            "mapping": {
+              "type": "date"
+            }
+          }
+        },
+        {
+          "non_analysed_string_template": {
+            "match": "*",
+            "match_mapping_type": "string",
+            "mapping": {
+              "type": "keyword"
+            }
+          }}
+      ]
+    }
+  }
+}'
+
+
+#Remove any existing Elastic search config"  
+curl -s -X "DELETE" "http://$ELASTIC_HOST:9200/""$table_name"  >>/tmp/log.txt 2>&1
+
+#Remove any existing Connect config"  
+curl -s -X "DELETE" "http://$CONNECT_HOST:8083/connectors/es_sink_""$TABLE_NAME"  >>/tmp/log.txt 2>&1
+
+#Remove any existing Grafana config"  
+curl -s -X "DELETE" "http://$GRAFANA_HOST:3000/api/datasources/name/""$table_name"   --user user:user  >>/tmp/log.txt 2>&1
+
+
+#looping to Adding Kafka Connect Elastic Source es_sink_$TABLE_NAME
+curl -s -X "POST" "http://$CONNECT_HOST:8083/connectors/" \
+     -H "Content-Type: application/json" \
+     -d $'{
+  "name": "es_sink_'$TABLE_NAME'",
+  "config": {
+    "schema.ignore": "true",
+    "topics": "'$TABLE_NAME'",
+    "key.converter": "org.apache.kafka.connect.storage.StringConverter",
+    "value.converter.schemas.enable": false,
+    "connector.class": "io.confluent.connect.elasticsearch.ElasticsearchSinkConnector",
+    "key.ignore": "true",
+    "value.converter": "org.apache.kafka.connect.json.JsonConverter",
+    "type.name": "type.name=kafkaconnect",
+    "topic.index.map": "'$TABLE_NAME':'$table_name'",
+    "connection.url": "http://'$ELASTIC_HOST':9200",
+    "transforms": "FilterNulls",
+    "transforms.FilterNulls.type": "io.confluent.transforms.NullFilter"
+  }
+}' >>/tmp/log.txt 2>&1
+
+
+echo -e "\t\t-> Adding Grafana Source"
+
+## Add the Elastic DataSource into Grafana
+curl -s -X "POST" "http://$GRAFANA_HOST:3000/api/datasources" \
+	    -H "Content-Type: application/json" \
+	     --user user:user \
+	     -d $'{"id":1,"orgId":1,"name":"'$table_name'","type":"elasticsearch","typeLogoUrl":"public/app/plugins/datasource/elasticsearch/img/elasticsearch.svg","access":"proxy","url":"http://'$ELASTIC_HOST':9200","password":"","user":"","database":"'$table_name'","basicAuth":false,"isDefault":false,"jsonData":{"timeField":"EVENT_TS"}}' \
+       >>/tmp/log.txt 2>&1
+
