@@ -1,0 +1,35 @@
+
+#if it has downloaded, not need to redo, since the image zise is huge.
+#docker pull "$registry/$name:$version"
+#docker pull "$registry/$proxyName:$proxyVersion"
+
+
+#carete network
+docker network create cda
+
+#manually start container of hdp
+docker run --privileged --name sandbox-hdp -h sandbox-hdp.hortonworks.com --network=cda --network-alias=sandbox-hdp.hortonworks.com -d "hortonworks/sandbox-hdp:3.0.1"
+
+docker ps -a
+
+#clean up
+docker exec -t "sandbox-hdp" sh -c "rm -rf /var/run/postgresql/*; systemctl restart postgresql-9.6.service;"
+
+#mannully start proxy
+
+#prepare port and refer script
+sed 's/sandbox-hdp-security/sandbox-hdp/g' assets/generate-proxy-deploy-script.sh > assets/generate-proxy-deploy-script.sh.new
+mv -f assets/generate-proxy-deploy-script.sh.new assets/generate-proxy-deploy-script.sh
+chmod +x assets/generate-proxy-deploy-script.sh
+assets/generate-proxy-deploy-script.sh 2>/dev/null
+if uname | grep MINGW; then 
+ sed -i -e 's/\( \/[a-z]\)/\U\1:/g' sandbox/proxy/proxy-deploy.sh
+fi
+chmod +x sandbox/proxy/proxy-deploy.sh 2>/dev/null
+
+
+# because the port always be token for other utility on window , below command line always fail, according to port be allocated, update  sandbox/proxy/proxy-deploy.sh and retry
+
+sandbox/proxy/proxy-deploy.sh 
+
+
